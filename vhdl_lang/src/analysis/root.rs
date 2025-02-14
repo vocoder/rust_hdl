@@ -10,12 +10,12 @@ use super::standard::StandardTypes;
 use super::standard::UniversalTypes;
 use crate::named_entity::*;
 
-use crate::Config;
 use crate::ast::search::*;
 use crate::ast::*;
 use crate::data::error_codes::ErrorCode;
 use crate::data::*;
 use crate::syntax::{Symbols, Token, TokenAccess};
+use crate::Config;
 use crate::{HasTokenSpan, TokenSpan};
 use fnv::{FnvHashMap, FnvHashSet};
 use parking_lot::RwLock;
@@ -1143,7 +1143,11 @@ impl DesignRoot {
     }
 
     // Returns the units that where re-analyzed
-    pub fn analyze(&mut self, config: &Config, diagnostics: &mut dyn DiagnosticHandler) -> Vec<UnitId> {
+    pub fn analyze(
+        &mut self,
+        config: &Config,
+        diagnostics: &mut dyn DiagnosticHandler,
+    ) -> Vec<UnitId> {
         self.reset();
 
         let mut units = Vec::default();
@@ -1190,10 +1194,9 @@ impl DesignRoot {
 
         // Emit diagnostics sorted within a file
         for library in self.libraries.values() {
-            let is_third_party = match config.get_library(&library.name.name_utf8())
-            {
+            let is_third_party = match config.get_library(&library.name.name_utf8()) {
                 Some(library_config) => library_config.is_third_party,
-                None => true
+                None => true,
             };
             for unit_id in library.sorted_unit_ids() {
                 let unit = library.units.get(unit_id.key()).unwrap();
