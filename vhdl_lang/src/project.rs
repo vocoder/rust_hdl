@@ -252,7 +252,7 @@ impl Project {
             self.root.ensure_library(library_name.clone());
         }
 
-        let analyzed_units = self.root.analyze(&mut diagnostics);
+        let analyzed_units = self.root.analyze(&self.config, &mut diagnostics);
 
         if let Some(ref mut lint) = self.lint.unused_declarations {
             lint.lint(&self.root, &self.config, &analyzed_units, &mut diagnostics);
