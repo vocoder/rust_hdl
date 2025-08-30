@@ -47,24 +47,26 @@ impl Declaration {
         match parent {
             // LRM: block_declarative_item
             AnyEntKind::Design(Design::Architecture(..))
-            | AnyEntKind::Concurrent(Some(Concurrent::Block | Concurrent::Generate)) => matches!(
-                self,
-                Object(ObjectDeclaration {
-                    class: Constant | Signal | SharedVariable,
-                    ..
-                }) | File(_)
-                    | Type(_)
-                    | Component(_)
-                    | Attribute(_)
-                    | Alias(_)
-                    | SubprogramDeclaration(_)
-                    | SubprogramInstantiation(_)
-                    | SubprogramBody(_)
-                    | Use(_)
-                    | Package(_)
-                    | Configuration(_)
-                    | View(_)
-            ),
+            | AnyEntKind::Concurrent(Some(Concurrent::Block | Concurrent::Generate), _) => {
+                matches!(
+                    self,
+                    Object(ObjectDeclaration {
+                        class: Constant | Signal | SharedVariable,
+                        ..
+                    }) | File(_)
+                        | Type(_)
+                        | Component(_)
+                        | Attribute(_)
+                        | Alias(_)
+                        | SubprogramDeclaration(_)
+                        | SubprogramInstantiation(_)
+                        | SubprogramBody(_)
+                        | Use(_)
+                        | Package(_)
+                        | Configuration(_)
+                        | View(_)
+                )
+            }
             // LRM: configuration_declarative_item
             AnyEntKind::Design(Design::Configuration) => {
                 matches!(self, Use(_) | Attribute(ast::Attribute::Specification(_)))
@@ -92,7 +94,7 @@ impl Declaration {
                 | Overloaded::UninstSubprogramDecl(..)
                 | Overloaded::UninstSubprogram(..),
             )
-            | AnyEntKind::Concurrent(Some(Concurrent::Process))
+            | AnyEntKind::Concurrent(Some(Concurrent::Process), _)
             | AnyEntKind::Type(named_entity::Type::Protected(..)) => matches!(
                 self,
                 Object(ObjectDeclaration {
@@ -564,7 +566,7 @@ impl<'a> AnalyzeContext<'a, '_> {
                     &mut instance.ident,
                     parent,
                     AnyEntKind::Overloaded(Overloaded::Subprogram(Signature::new(
-                        FormalRegion::new_params(),
+                        ParameterRegion::default(),
                         None,
                     ))),
                     src_span,
@@ -1261,7 +1263,7 @@ fn get_entity_class(ent: EntRef<'_>) -> Option<EntityClass> {
         AnyEntKind::Type(Type::Subtype(_)) => Some(EntityClass::Subtype),
         AnyEntKind::Type(_) => Some(EntityClass::Type),
         AnyEntKind::ElementDeclaration(_) => None,
-        AnyEntKind::Concurrent(_) => Some(EntityClass::Label),
+        AnyEntKind::Concurrent(..) => Some(EntityClass::Label),
         AnyEntKind::Sequential(_) => Some(EntityClass::Label),
         AnyEntKind::Object(obj) => match obj.class {
             ObjectClass::Signal => Some(EntityClass::Signal),
@@ -1317,9 +1319,9 @@ const UNASSOCIATED_DISPLAY_THRESHOLD: usize = 3;
 /// The returned message has the format "Missing association of x".
 /// * If there is only one element, the message becomes "Missing association of element the_element"
 /// * If there are more elements, the message becomes
-///     "Missing association of element the_element1, the_element2 and the_element3"
+///   "Missing association of element the_element1, the_element2 and the_element3"
 /// * If there are more elements than [UNASSOCIATED_DISPLAY_THRESHOLD], the message will be truncated
-///     to "Missing association of element the_element1, the_element2, the_element3 and 17 more"
+///   to "Missing association of element the_element1, the_element2, the_element3 and 17 more"
 fn pretty_format_unassociated_message(unassociated: &HashSet<&RecordElement<'_>>) -> String {
     assert!(
         !unassociated.is_empty(),

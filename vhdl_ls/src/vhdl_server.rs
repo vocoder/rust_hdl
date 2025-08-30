@@ -101,12 +101,10 @@ impl VHDLServer {
 
     /// Load the workspace root configuration file
     fn load_root_uri_config(&self) -> io::Result<Config> {
-        let config_file = self.config_file.as_ref().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                "Workspace root configuration file not set",
-            )
-        })?;
+        let config_file = self
+            .config_file
+            .as_ref()
+            .ok_or_else(|| io::Error::other("Workspace root configuration file not set"))?;
         let config = Config::read_file_path(config_file)?;
 
         // Log which file was loaded
@@ -479,8 +477,8 @@ fn to_symbol_kind(kind: &AnyEntKind) -> SymbolKind {
         AnyEntKind::Type(t) => type_kind(t),
         AnyEntKind::ElementDeclaration(_) => SymbolKind::FIELD,
         AnyEntKind::Sequential(_) => SymbolKind::NAMESPACE,
-        AnyEntKind::Concurrent(Some(Concurrent::Instance)) => SymbolKind::MODULE,
-        AnyEntKind::Concurrent(_) => SymbolKind::NAMESPACE,
+        AnyEntKind::Concurrent(Some(Concurrent::Instance), _) => SymbolKind::MODULE,
+        AnyEntKind::Concurrent(..) => SymbolKind::NAMESPACE,
         AnyEntKind::Library => SymbolKind::NAMESPACE,
         AnyEntKind::View(_) => SymbolKind::INTERFACE,
         AnyEntKind::Design(d) => match d {

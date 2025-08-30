@@ -1170,17 +1170,39 @@ fn parse_quoted(
         buffer.bytes.push(quote)
     }
 
-    while let Some(chr) = reader.pop()? {
-        is_multiline |= chr == b'\n';
-        if chr == quote {
-            if reader.peek()? == Some(quote) {
-                reader.skip();
-            } else {
-                found_end = true;
-                break;
+    // Closure that allows usage of the `?` operator
+    let mut quoted_inner = || {
+        while let Some(chr) = reader.pop()? {
+            is_multiline |= chr == b'\n';
+            if chr == quote {
+                if reader.peek()? == Some(quote) {
+                    reader.skip();
+                } else {
+                    found_end = true;
+                    break;
+                }
             }
+            buffer.bytes.push(chr);
         }
-        buffer.bytes.push(chr);
+        Ok(())
+    };
+
+    match quoted_inner() {
+        Ok(_) => {}
+        // When we discover a token error, consume all remaining
+        // characters respecting quote rules.
+        Err(token_err) => {
+            while let Some(char) = reader.pop_char() {
+                if char == quote as char {
+                    if reader.peek_char() == Some(quote as char) {
+                        reader.skip();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            return Err(token_err);
+        }
     }
 
     if include_quote {
@@ -1493,13 +1515,7 @@ fn parse_bit_string(
     bit_string_length: Option<u32>,
     start: usize,
 ) -> Result<(Kind, Value), TokenError> {
-    let value = match parse_string(buffer, reader) {
-        Ok(value) => value,
-        Err(mut err) => {
-            err.message = "Invalid bit string literal".to_string();
-            return Err(err);
-        }
-    };
+    let value = parse_string(buffer, reader)?;
 
     let end_pos = reader.state().pos();
     let actual_value = reader
@@ -2609,6 +2625,57 @@ my_other_ident",
                 code.pos(),
                 "Invalid bit string literal",
             ))]
+        );
+    }
+
+    #[test]
+    fn non_ascii_in_bit_string() {
+        let code = Code::new("X\"Ä087€\"");
+        let (tokens, _) = code.tokenize_result();
+        assert_eq!(
+            tokens,
+            vec![Err(Diagnostic::syntax_error(
+                code.s1("€"),
+                "Found invalid latin-1 character '€'",
+            ))]
+        );
+
+        let code = Code::new("X\"Ä087€\"\"A\"");
+        let (tokens, _) = code.tokenize_result();
+        assert_eq!(
+            tokens,
+            vec![Err(Diagnostic::syntax_error(
+                code.s1("€"),
+                "Found invalid latin-1 character '€'",
+            ))]
+        );
+    }
+
+    #[test]
+    fn non_ascii_before_bit_string() {
+        let code = Code::new("€X\"ABC\"");
+        let (tokens, _) = code.tokenize_result();
+        assert_eq!(
+            tokens,
+            vec![
+                Err(Diagnostic::syntax_error(
+                    code.s1("€"),
+                    "Found invalid latin-1 character '€'",
+                )),
+                Ok(Token {
+                    kind: BitString,
+                    value: Value::BitString(
+                        Latin1String::from_utf8_unchecked("X\"ABC\""),
+                        ast::BitString {
+                            length: None,
+                            base: BaseSpecifier::X,
+                            value: Latin1String::from_utf8_unchecked("ABC"),
+                        }
+                    ),
+                    pos: code.s1("X\"ABC\"").pos(),
+                    comments: None,
+                })
+            ],
         );
     }
 
