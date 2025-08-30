@@ -1196,7 +1196,7 @@ impl DesignRoot {
         for library in self.libraries.values() {
             let is_third_party = match config.get_library(&library.name.name_utf8()) {
                 Some(library_config) => library_config.is_third_party,
-                None => true,
+                None => false,
             };
             for unit_id in library.sorted_unit_ids() {
                 let unit = library.units.get(unit_id.key()).unwrap();
