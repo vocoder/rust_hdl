@@ -13,6 +13,7 @@ use pretty_assertions::assert_eq;
 use std::collections::{hash_map::Entry, HashMap};
 use std::sync::Arc;
 use vhdl_lang::VHDLStandard;
+use vhdl_lang::Config;
 
 pub struct LibraryBuilder {
     code_builder: CodeBuilder,
@@ -89,7 +90,8 @@ end architecture;"
                 );
             }
         }
-        root.analyze(&mut diagnostics);
+        let config = Config::default();
+        root.analyze(&config, &mut diagnostics);
 
         (root, diagnostics)
     }

@@ -12,6 +12,7 @@ use crate::named_entity::{EntityId, Reference};
 use crate::syntax::TokenAccess;
 use fnv::FnvHashSet;
 use pretty_assertions::assert_eq;
+use vhdl_lang::Config;
 
 #[test]
 fn incremental_analysis_of_use_within_package() {
@@ -280,8 +281,9 @@ fn check_incremental_analysis(builder: LibraryBuilder, expected_diagnostics: Vec
             }
         }
 
+        let config = Config::default();
         let mut diagnostics = Vec::new();
-        root.analyze(&mut diagnostics);
+        root.analyze(&config, &mut diagnostics);
         check_diagnostics(diagnostics, expected_diagnostics.clone());
 
         let (library_name, code) = &codes[i];
@@ -302,11 +304,12 @@ fn check_incremental_analysis(builder: LibraryBuilder, expected_diagnostics: Vec
 }
 
 fn check_analysis_equal(got: &mut DesignRoot, expected: &mut DesignRoot) -> Vec<Diagnostic> {
+    let config = Config::default();
     let mut got_diagnostics = Vec::new();
-    got.analyze(&mut got_diagnostics);
+    got.analyze(&config, &mut got_diagnostics);
 
     let mut expected_diagnostics = Vec::new();
-    expected.analyze(&mut expected_diagnostics);
+    expected.analyze(&config, &mut expected_diagnostics);
 
     // Check that diagnostics are equal to doing analysis from scratch
     check_diagnostics(got_diagnostics.clone(), expected_diagnostics);
