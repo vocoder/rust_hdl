@@ -160,7 +160,7 @@ impl Project {
             )
             .collect();
 
-        for (file_name, library_names, parser_diagnostics, result) in parsed.into_iter() {
+        for (file_name, library_names, parser_diagnostics, result) in parsed {
             let (source, design_file) = match result {
                 Ok(result) => result,
                 Err(err) => {
@@ -333,6 +333,14 @@ impl Project {
 
     pub fn find_all_references_in_source(&self, source: &Source, ent: EntRef<'_>) -> Vec<SrcPos> {
         self.root.find_all_references_in_source(source, ent)
+    }
+
+    /// Collect all (position, entity) pairs in a source file.
+    pub fn find_all_entity_references(&self, source: &Source) -> Vec<(SrcPos, EntRef<'_>)> {
+        use crate::ast::search::SemanticTokenCollector;
+        let mut collector = SemanticTokenCollector::new(&self.root, source);
+        let _ = self.root.search_source(source, &mut collector);
+        collector.tokens
     }
 
     /// Get source positions that are not resolved to a declaration

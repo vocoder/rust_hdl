@@ -31,7 +31,7 @@ impl<'a> TokenStream<'a> {
     /// ```
     /// This needs special handling as the text that follows the identifier is arbitrary.
     fn handle_tool_directive(
-        grave_accent: Token,
+        grave_accent: &Token,
         tokenizer: &mut Tokenizer<'_>,
         diagnostics: &mut dyn DiagnosticHandler,
     ) {
@@ -64,12 +64,15 @@ impl<'a> TokenStream<'a> {
         loop {
             match tokenizer.pop() {
                 Ok(Some(token)) if token.kind == GraveAccent => {
-                    TokenStream::handle_tool_directive(token, &mut tokenizer, diagnostics)
+                    TokenStream::handle_tool_directive(&token, &mut tokenizer, diagnostics)
                 }
                 Ok(Some(token)) => tokens.push(token),
                 Ok(None) => break,
                 Err(err) => diagnostics.push(err),
             }
+        }
+        for diag in tokenizer.take_diagnostics() {
+            diagnostics.push(diag);
         }
         TokenStream {
             tokenizer,
@@ -321,7 +324,7 @@ impl<T> Recover<T> for DiagnosticResult<T> {
             Err(ref original_err) => {
                 let res = ctx.stream.skip_until(cond);
                 match res {
-                    Ok(_) => self,
+                    Ok(()) => self,
                     Err(err) => {
                         ctx.diagnostics.push(original_err.clone());
                         Err(err)

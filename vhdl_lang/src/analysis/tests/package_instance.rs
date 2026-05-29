@@ -715,3 +715,248 @@ package pkg_inst is new work.test_pkg generic map (8, 9);
         )],
     );
 }
+
+#[test]
+fn no_spurious_duplicate_decl_for_multiple_generic_pkg_instances() {
+    let mut builder = LibraryBuilder::new();
+    builder.code(
+        "libname",
+        "
+package generic_record_pkg is
+   generic(
+      g_length : natural
+   );
+
+   type generic_record is record
+      field: integer_vector(g_length-1 downto 0);
+   end record;
+end package;
+
+entity tb_playground is
+end entity;
+
+use work.generic_record_pkg;
+
+architecture arch of tb_playground is
+   package i_gen_rec_pkg is new generic_record_pkg generic map(2);
+   alias gen_rec_2 is i_gen_rec_pkg.generic_record;
+
+   package i_other_gen_rec_pkg is new generic_record_pkg generic map(3);
+   alias gen_rec_3 is i_other_gen_rec_pkg.generic_record;
+begin
+
+end architecture;
+",
+    );
+
+    let diagnostics = builder.analyze();
+    check_no_diagnostics(&diagnostics);
+}
+
+#[test]
+fn multiple_generic_pkg_instances_without_aliases() {
+    let mut builder = LibraryBuilder::new();
+    builder.code(
+        "libname",
+        "
+package generic_record_pkg is
+   generic(
+      g_length : natural
+   );
+
+   type generic_record is record
+      field: integer_vector(g_length-1 downto 0);
+   end record;
+end package;
+
+entity tb is
+end entity;
+
+use work.generic_record_pkg;
+
+architecture arch of tb is
+   package pkg1 is new generic_record_pkg generic map(2);
+   package pkg2 is new generic_record_pkg generic map(3);
+   signal s1 : pkg1.generic_record;
+   signal s2 : pkg2.generic_record;
+begin
+end architecture;
+",
+    );
+
+    let diagnostics = builder.analyze();
+    check_no_diagnostics(&diagnostics);
+}
+
+#[test]
+fn multiple_generic_pkg_instances_with_use_all() {
+    let mut builder = LibraryBuilder::new();
+    builder.code(
+        "libname",
+        "
+package generic_record_pkg is
+   generic(
+      g_length : natural
+   );
+
+   type generic_record is record
+      field: integer_vector(g_length-1 downto 0);
+   end record;
+end package;
+
+entity tb is
+end entity;
+
+use work.generic_record_pkg;
+
+architecture arch of tb is
+   package pkg1 is new generic_record_pkg generic map(2);
+   use pkg1.all;
+
+   package pkg2 is new generic_record_pkg generic map(3);
+begin
+end architecture;
+",
+    );
+
+    let diagnostics = builder.analyze();
+    check_no_diagnostics(&diagnostics);
+}
+
+// Regression test for https://github.com/VHDL-LS/rust_hdl/issues/403
+#[test]
+fn type_from_generic_package_formal_is_compatible_with_actual() {
+    let mut builder = LibraryBuilder::new();
+    builder.code(
+        "libname",
+        "
+package base_pkg is
+  generic(n : natural);
+  type t is range 0 to n;
+end package;
+
+use work.base_pkg;
+package wrapper_pkg is
+  generic(package i_base is new base_pkg generic map(<>));
+  function get return i_base.t;
+end package;
+
+package body wrapper_pkg is
+  function get return i_base.t is
+  begin
+    return 0;
+  end function;
+end package body;
+
+use work.base_pkg;
+use work.wrapper_pkg;
+entity tb is end entity;
+
+architecture arch of tb is
+  package my_base is new base_pkg generic map(10);
+  package my_wrapper is new wrapper_pkg generic map(my_base);
+begin
+  process
+    variable v : my_base.t;
+  begin
+    v := my_wrapper.get;
+    wait;
+  end process;
+end architecture;
+",
+    );
+
+    let diagnostics = builder.analyze();
+    check_no_diagnostics(&diagnostics);
+}
+
+// Regression test for https://github.com/VHDL-LS/rust_hdl/issues/460
+#[test]
+fn interface_package_with_explicit_generic_map_does_not_require_association() {
+    let mut builder = LibraryBuilder::new();
+    builder.code(
+        "libname",
+        "
+package example_pkg is
+    generic (
+        G_GENERIC   : integer
+    );
+end package;
+
+entity example is
+    generic (
+        package example_pkg is new work.example_pkg
+        generic map (
+            G_GENERIC   => 1
+        )
+    );
+end entity;
+
+architecture rtl of example is
+begin
+
+    inst: entity work.example;
+
+end architecture;
+",
+    );
+
+    let diagnostics = builder.analyze();
+    check_no_diagnostics(&diagnostics);
+}
+
+// Regression test for https://github.com/VHDL-LS/rust_hdl/issues/463
+//
+// Operators and subprograms declared alongside a type in a generic package
+// must reference the *instantiated* type, not the uninstantiated one, no
+// matter the order in which the package's entities are visited during
+// instantiation (the order is hash-determined and previously caused
+// intermittent "Found no match for operator ..." diagnostics).
+#[test]
+fn implicit_operators_resolve_against_instantiated_type() {
+    let mut builder = LibraryBuilder::new();
+    builder.code(
+        "libname",
+        "
+package pokemon_pkg is
+    generic (
+        NUMBER_OF_POKEMONS: natural := 3
+    );
+
+    type pokemon_t is (pikachu, karnimani);
+    function get_pokemon(idx: natural) return pokemon_t;
+end package;
+
+package body pokemon_pkg is
+    function get_pokemon(idx: natural) return pokemon_t is begin
+        if idx = 0 then
+            return pikachu;
+        else
+            return karnimani;
+        end if;
+    end function;
+end package body;
+
+package pokemon_pkg_inst is new work.pokemon_pkg
+    generic map (NUMBER_OF_POKEMONS => 3);
+
+use work.pokemon_pkg_inst.all;
+
+entity pokemon is
+end entity;
+
+architecture behavioural of pokemon is
+    constant NUMBER_OF_POKEMONS: natural := 3;
+begin
+    gen_scoops: for i in 0 to NUMBER_OF_POKEMONS - 1 generate
+        constant MY_POKEMON: pokemon_t := get_pokemon(i);
+    begin
+        check: assert (MY_POKEMON = pikachu);
+    end generate;
+end architecture;
+",
+    );
+
+    let diagnostics = builder.analyze();
+    check_no_diagnostics(&diagnostics);
+}

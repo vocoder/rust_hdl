@@ -605,8 +605,7 @@ impl<'a> AnalyzeContext<'a, '_> {
                                     let signature = target.subprogram_key().map(|base_type| {
                                         mapping
                                             .get(&base_type.id())
-                                            .map(|ent| ent.base())
-                                            .unwrap_or(base_type)
+                                            .map_or(base_type, |ent| ent.base())
                                     });
                                     if let Some(ent) = overloaded.get(&signature) {
                                         name.set_unique_reference(&ent);
@@ -655,7 +654,33 @@ impl<'a> AnalyzeContext<'a, '_> {
                         },
                         InterfaceEnt::Package(_) => match expr {
                             Expression::Name(name) => {
-                                self.name_resolve(scope, actual.span, name, diagnostics)?;
+                                let resolved =
+                                    self.name_resolve(scope, actual.span, name, diagnostics)?;
+                                // When a formal generic package is mapped to an actual package,
+                                // populate the type mapping so that types from the formal package's
+                                // region resolve to the corresponding types in the actual package.
+                                if let ResolvedName::Design(actual_pkg) = resolved {
+                                    let actual_region = match actual_pkg.kind() {
+                                        Design::PackageInstance(r)
+                                        | Design::InterfacePackageInstance(_, r) => Some(r),
+                                        _ => None,
+                                    };
+                                    if let Some(actual_region) = actual_region {
+                                        for named_entities in actual_region.entities.values() {
+                                            if let Some(actual_ent) = named_entities.as_unique() {
+                                                if let (
+                                                    Some(actual_type),
+                                                    Related::InstanceOf(uninst),
+                                                ) = (
+                                                    TypeEnt::from_any(actual_ent),
+                                                    &actual_ent.related,
+                                                ) {
+                                                    mapping.insert(uninst.id(), actual_type);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             _ => diagnostics.add(
                                 actual.pos(self.ctx),
