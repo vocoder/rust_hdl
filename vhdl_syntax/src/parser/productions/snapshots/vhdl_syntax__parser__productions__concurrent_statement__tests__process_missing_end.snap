@@ -1,0 +1,41 @@
+---
+source: vhdl_syntax/src/parser/productions/concurrent_statement.rs
+expression: "$crate :: parser :: test_utils :: render_recovery(code, & tree, & diags)"
+---
+== source ==
+process (clk)
+begin
+  q <= d;
+
+== tree ==
+ProcessStatement
+  ProcessStatementPreamble
+    Keyword(Process)
+    ParenthesizedProcessSensitivityList
+      LeftPar
+      SensitivityList
+        Name
+          NameDesignatorPrefix
+            Identifier 'clk'
+      RightPar
+  DeclarationStatementSeparator
+    Keyword(Begin)
+  SequentialStatements
+    SimpleWaveformAssignment
+      NameTarget
+        Name
+          NameDesignatorPrefix
+            Identifier 'q'
+      LTE
+      WaveformElements
+        WaveformElement
+          NameExpression
+            Name
+              NameDesignatorPrefix
+                Identifier 'd'
+      SemiColon
+
+== diagnostics ==
+3:10 Expected([Keyword(End)])
+3:10 Expected([Keyword(Process)])
+3:10 Expected([SemiColon])

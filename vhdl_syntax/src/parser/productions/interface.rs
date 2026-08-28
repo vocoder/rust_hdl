@@ -59,29 +59,17 @@ impl Parser {
     }
 
     pub fn interface_declaration(&mut self) {
-        match self.peek_token() {
-            Keyword(Kw::Signal | Kw::Constant | Kw::Variable) | Identifier => {
+        match_next_token!(self,
+            Keyword(Kw::Signal), Keyword(Kw::Constant), Keyword(Kw::Variable), Identifier => {
                 self.interface_object_declaration();
-            }
+            },
             Keyword(Kw::File) => self.interface_file_declaration(),
             Keyword(Kw::Type) => self.interface_type_declaration(),
-            Keyword(Kw::Function | Kw::Procedure | Kw::Impure | Kw::Pure) => {
+            Keyword(Kw::Function), Keyword(Kw::Procedure), Keyword(Kw::Impure), Keyword(Kw::Pure) => {
                 self.interface_subprogram_declaration()
-            }
+            },
             Keyword(Kw::Package) => self.interface_package_declaration(),
-            _ => self.expect_tokens_err([
-                Keyword(Kw::Signal),
-                Keyword(Kw::Constant),
-                Keyword(Kw::Variable),
-                Identifier,
-                Keyword(Kw::File),
-                Keyword(Kw::Type),
-                Keyword(Kw::Function),
-                Keyword(Kw::Procedure),
-                Keyword(Kw::Impure),
-                Keyword(Kw::Pure),
-            ]),
-        }
+        );
     }
 
     pub fn interface_file_declaration(&mut self) {
@@ -186,19 +174,15 @@ impl Parser {
     }
 
     pub fn interface_object_declaration(&mut self) {
-        let checkpoint = self.checkpoint();
-        let tok = self.opt_tokens([
+        // The object class (constant/signal/variable) is optional and not
+        // reliably distinguishable here, so a single node covers all three; the
+        // explicit class keyword, when present, is kept as a child.
+        self.start_node(InterfaceObjectDeclaration);
+        self.opt_tokens([
             Keyword(Kw::Signal),
             Keyword(Kw::Constant),
             Keyword(Kw::Variable),
         ]);
-        match tok {
-            Some(Keyword(Kw::Signal)) => self.start_node_at(checkpoint, InterfaceSignalDeclaration),
-            Some(Keyword(Kw::Variable)) => {
-                self.start_node_at(checkpoint, InterfaceVariableDeclaration)
-            }
-            _ => self.start_node_at(checkpoint, InterfaceConstantDeclaration),
-        }
         self.identifier_list();
         self.expect_token(Colon);
         self.opt_mode();
@@ -600,5 +584,32 @@ package foo is new lib.pkg
 package foo is new lib.pkg
      generic map (default)"
         ));
+    }
+
+    // MARK: Error recovery
+
+    #[test]
+    fn port_missing_colon() {
+        assert_recovery_snapshot!("port (clk in std_logic);", Parser::port_clause);
+    }
+
+    #[test]
+    fn port_clause_unclosed_paren() {
+        assert_recovery_snapshot!("port (clk : in std_logic;", Parser::port_clause);
+    }
+
+    #[test]
+    fn generic_clause_unclosed_paren() {
+        assert_recovery_snapshot!("generic (width : integer", Parser::generic_clause);
+    }
+
+    #[ignore = "missing list separator is silently mis-parsed (resolution-indication \
+        ambiguity + unanchored separated_list); needs more resilient parsing"]
+    #[test]
+    fn interface_list_missing_separator() {
+        assert_recovery_snapshot!(
+            "clk : in std_logic rst : in std_logic",
+            Parser::interface_list
+        );
     }
 }

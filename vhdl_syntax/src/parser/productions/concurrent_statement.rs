@@ -4,6 +4,7 @@
 //
 // Copyright (c)  2025, Lukas Scheller lukasscheller@icloud.com
 
+use crate::parser::util::StallGuard;
 use crate::parser::Parser;
 use crate::syntax::node_kind::NodeKind::*;
 use crate::tokens::token_kind::Keyword as Kw;
@@ -67,7 +68,8 @@ impl Parser {
 
     pub fn concurrent_statements(&mut self) {
         self.start_node(ConcurrentStatements);
-        loop {
+        let mut guard = StallGuard::new();
+        while guard.should_continue(self) {
             match self.peek_token() {
                 Keyword(Kw::End | Kw::Elsif | Kw::Else | Kw::When) | Eof => {
                     break;
@@ -165,10 +167,18 @@ impl Parser {
                         self.opt_delay_mechanism();
                         let waveform_checkpoint = self.checkpoint();
                         self.waveform();
-                        if self.opt_token(Keyword(Kw::When)) {
+                        if self.next_is(Keyword(Kw::When)) {
                             self.start_node_at(checkpoint, ConcurrentConditionalSignalAssignment);
                             self.start_node_at(waveform_checkpoint, ConditionalWaveforms);
-                            self.conditional_waveforms_after_first_when();
+                            self.start_node_at(waveform_checkpoint, ConditionalWaveform);
+                            self.skip();
+                            self.expression();
+                            self.end_node();
+                            self.conditional_else(
+                                Parser::waveform,
+                                ConditionalWaveformElseWhenExpression,
+                                ConditionalWaveformElseItem,
+                            );
                             self.end_node();
                         } else {
                             self.start_node_at(checkpoint, ConcurrentSimpleSignalAssignment);
@@ -191,29 +201,24 @@ impl Parser {
                 self.end_node();
             }
             _ => {
-                self.skip();
-                self.expect_tokens_err([Keyword(Kw::Block)])
+                self.expect_tokens_recover([
+                    Keyword(Kw::Block),
+                    Keyword(Kw::Process),
+                    Keyword(Kw::Component),
+                    Keyword(Kw::Configuration),
+                    Keyword(Kw::Entity),
+                    Keyword(Kw::For),
+                    Keyword(Kw::If),
+                    Keyword(Kw::Case),
+                    Keyword(Kw::Assert),
+                    Keyword(Kw::With),
+                    Identifier,
+                    LtLt,
+                    StringLiteral,
+                    CharacterLiteral,
+                ]);
             }
-        }
-    }
-
-    /// Parse conditional waveforms, assuming the first `waveform when` is already parsed
-    fn conditional_waveforms_after_first_when(&mut self) {
-        self.expression();
-        while self.next_is(Keyword(Kw::Else)) {
-            let checkpoint = self.checkpoint();
-            self.expect_kw(Kw::Else);
-            self.waveform();
-            if self.opt_token(Keyword(Kw::When)) {
-                self.start_node_at(checkpoint, ConditionalWaveformElseWhenExpression);
-                self.expression();
-                self.end_node();
-            } else {
-                self.start_node_at(checkpoint, ConditionalWaveformElseItem);
-                self.end_node();
-                break;
-            }
-        }
+        };
     }
 
     pub fn concurrent_selected_signal_assignment(&mut self) {
@@ -459,14 +464,16 @@ impl Parser {
         if self.next_is(Keyword(Kw::All)) {
             self.skip_into_node(AllSensitivityList);
         } else {
-            self.name_list();
+            self.sensitivity_list();
         }
         self.expect_token(RightPar);
         self.end_node();
     }
 
     pub fn sensitivity_list(&mut self) {
+        self.start_node(SensitivityList);
         self.separated_list(Parser::name, Comma);
+        self.end_node();
     }
 }
 
@@ -669,6 +676,14 @@ end process main;",
         insta::assert_snapshot!(stmt_to_test_text(
             "<< signal dut.foo : std_logic >> <= bar(2 to 3);",
         ));
+    }
+
+    #[test]
+    fn concurrent_conditional_signal_assignment() {
+        // The first `waveform when condition` must be wrapped in a
+        // `ConditionalWaveform` inside `ConditionalWaveforms`, like the
+        // sequential form.
+        insta::assert_snapshot!(stmt_to_test_text("foo <= a when sel else b;",));
     }
 
     #[test]
@@ -905,5 +920,66 @@ gen1: case expr(0) + 2 generate
     foo(clk);
 end generate gen1;",
         ));
+    }
+
+    // MARK: Error recovery
+
+    #[test]
+    #[ignore = "currently produces spurious error messages since declarations and statements are not clearly separated"]
+    fn process_missing_begin() {
+        assert_recovery_snapshot!(
+            "\
+process (clk)
+  variable count : integer := 0;
+  count := count + 1;
+end process;",
+            Parser::process_statement
+        );
+    }
+
+    #[test]
+    fn process_missing_end() {
+        assert_recovery_snapshot!(
+            "\
+process (clk)
+begin
+  q <= d;",
+            Parser::process_statement
+        );
+    }
+
+    #[test]
+    fn for_generate_missing_end() {
+        assert_recovery_snapshot!(
+            "\
+gen: for i in 0 to 7 generate
+  buf(i) <= data(i);",
+            Parser::for_generate_statement
+        );
+    }
+
+    #[test]
+    fn instantiation_missing_semicolon() {
+        assert_recovery_snapshot!(
+            "\
+u_cpu: entity work.cpu
+  port map (
+    clk => clk
+  )",
+            Parser::component_instantiation_statement
+        );
+    }
+
+    // concurrent statement loop. Could loop endlessly
+    #[test]
+    fn architecture_misplaced_use() {
+        assert_recovery_snapshot!(
+            "\
+architecture a of e is
+  begin
+    use work.all;
+  end architecture;",
+            Parser::architecture
+        );
     }
 }

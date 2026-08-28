@@ -8,6 +8,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+publish = false
 
 [dependencies]
 nonzero_ext = "0.3.0"
@@ -17,7 +18,7 @@ serde = { version = "1.0.228", optional = true, features = ["derive"]}
 assert_matches = "1.5.0"
 pretty_assertions = "1.4.1"
 insta = { version = "1.36", features = ["redactions"] }
-similar = { version = "2.7.0", features = ["bytes"] }
+similar = { version = "3.1.2", features = ["bytes"] }
 
 [features]
 serde = ["dep:serde"]

@@ -47,11 +47,12 @@ impl Parser {
             self.opt_tokens([Keyword(Kw::Pure), Keyword(Kw::Impure)]);
             self.expect_token(Keyword(Kw::Function));
             true
-        } else if self.opt_token(Keyword(Kw::Procedure)) {
+        } else if self.next_is(Keyword(Kw::Procedure)) {
             self.start_node(ProcedureSpecification);
+            self.expect_token(Keyword(Kw::Procedure));
             false
         } else {
-            self.expect_tokens_err([
+            self.expect_tokens_recover([
                 Keyword(Kw::Pure),
                 Keyword(Kw::Impure),
                 Keyword(Kw::Function),
@@ -335,5 +336,28 @@ end procedure swap;"
             Parser::subprogram_instantiation_declaration,
             "function my_proc is new proc;"
         ));
+    }
+
+    // MARK: Error recovery
+
+    #[test]
+    fn function_missing_return_type() {
+        assert_recovery_snapshot!(
+            "function f(a : integer) return ;",
+            Parser::subprogram_declaration
+        );
+    }
+
+    #[test]
+    fn function_missing_return_clause() {
+        assert_recovery_snapshot!("function f(a : integer);", Parser::subprogram_declaration);
+    }
+
+    #[test]
+    fn function_unclosed_parameter_list() {
+        assert_recovery_snapshot!(
+            "function f(a : integer return integer;",
+            Parser::subprogram_declaration
+        );
     }
 }

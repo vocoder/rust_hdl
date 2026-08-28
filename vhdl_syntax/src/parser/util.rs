@@ -1,16 +1,16 @@
-use crate::parser::builder::Checkpoint;
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at http://mozilla.org/MPL/2.0/.
 //
 // Copyright (c)  2024, Lukas Scheller lukasscheller@icloud.com
 /// (private) utility functions used when parsing
-use crate::parser::diagnostics::ParserDiagnostic;
-use crate::parser::diagnostics::ParserError::*;
+use crate::parser::builder::Checkpoint;
+use crate::parser::error::SyntaxErr;
 use crate::parser::Parser;
 use crate::syntax::green::GreenNode;
 use crate::syntax::node_kind::NodeKind;
-use crate::tokens::{Keyword, TokenKind};
+use crate::tokens::tokenizer::LexErr;
+use crate::tokens::{Keyword, Token, TokenKind};
 
 /// Allows match-style syntax for tokens.
 /// This function does not consume the next token.
@@ -37,8 +37,7 @@ macro_rules! match_next_token {
     (@inner $parser:expr, [[ $($($pattern:pat_param),+ => $action:expr),+ $(,)? ]], [[ $($($pattern_expr:expr),+ => $_action_expr:expr),+ $(,)? ]]) => {
         match $parser.peek_token() {
             $($($pattern)|+ => $action),+,
-            $crate::tokens::token_kind::TokenKind::Eof => $parser.eof_err(),
-            _ => $parser.expect_tokens_err([$($($pattern_expr),+),+])
+            _ => $parser.expect_tokens_recover([$($($pattern_expr),+),+]),
         }
     };
 }
@@ -57,8 +56,7 @@ macro_rules! match_next_token_consume {
                 $parser.skip();
                 $action
             }),+
-            $crate::tokens::token_kind::TokenKind::Eof => $parser.eof_err(),
-            _ => $parser.expect_tokens_err([$($($pattern_expr),+),+])
+            _ => $parser.expect_tokens_recover([$($($pattern_expr),+),+]),
         }
     };
 }
@@ -72,9 +70,44 @@ pub enum LookaheadError {
     TokenKindNotFound,
 }
 
+/// Guards a parsing loop against hangs by detecting lack of forward progress.
+///
+/// Call [`StallGuard::should_continue`] at the top of the loop. It returns
+/// `false` once an entire iteration consumed no input (the parser position did
+/// not advance), which means the loop is stalled and must stop. The first call
+/// always returns `true` to prime the guard before the loop body has run.
+pub(crate) struct StallGuard {
+    last_pos: Option<usize>,
+}
+
+impl StallGuard {
+    pub(crate) fn new() -> StallGuard {
+        StallGuard { last_pos: None }
+    }
+
+    pub(crate) fn should_continue(&mut self, parser: &mut Parser) -> bool {
+        let current_pos = parser.builder.current_pos();
+        let Some(last_pos) = self.last_pos else {
+            self.last_pos = Some(current_pos);
+            return true;
+        };
+        self.last_pos = Some(current_pos);
+        current_pos > last_pos
+    }
+}
+
 impl Parser {
+    fn push_opt_lex_err(&mut self, err: Option<LexErr>, token: &Token, token_start: usize) {
+        if let Some(err) = err {
+            self.errors
+                .push(SyntaxErr::from_lex_err(err, token, token_start));
+        }
+    }
+
     pub(crate) fn skip(&mut self) {
-        if let Some(token) = self.token_stream.next() {
+        let start = self.builder.current_pos();
+        if let Some((token, err)) = self.token_stream.next() {
+            self.push_opt_lex_err(err, &token, start);
             self.builder.push(token);
         }
     }
@@ -93,15 +126,14 @@ impl Parser {
     }
 
     pub(crate) fn expect_token(&mut self, kind: TokenKind) {
-        if let Some(token) = self.token_stream.next_if(|token| token.kind() == kind) {
+        let start = self.builder.current_pos();
+        if let Some((token, err)) = self.token_stream.next_if(|token| token.kind() == kind) {
+            self.push_opt_lex_err(err, &token, start);
             self.builder.push(token);
             return;
         }
-        // TODO: what are possible recovery strategies?
-        // - Leave as is
-        // - Insert pseudo-token
-        self.skip();
-        self.expect_tokens_err([kind]);
+
+        self.expect_tokens_recover([kind]);
     }
 
     pub(crate) fn expect_tokens<const N: usize>(&mut self, kinds: [TokenKind; N]) {
@@ -119,7 +151,7 @@ impl Parser {
                 return Some(kind);
             }
         }
-        self.expect_tokens_err(kinds);
+        self.expect_tokens_recover(kinds);
         None
     }
 
@@ -154,7 +186,9 @@ impl Parser {
     }
 
     pub(crate) fn opt_token(&mut self, kind: TokenKind) -> bool {
-        if let Some(token) = self.token_stream.next_if(|token| token.kind() == kind) {
+        let start = self.builder.current_pos();
+        if let Some((token, err)) = self.token_stream.next_if(|token| token.kind() == kind) {
+            self.push_opt_lex_err(err, &token, start);
             self.builder.push(token);
             true
         } else {
@@ -166,10 +200,12 @@ impl Parser {
         &mut self,
         kinds: [TokenKind; N],
     ) -> Option<TokenKind> {
-        if let Some(token) = self
+        let start = self.builder.current_pos();
+        if let Some((token, err)) = self
             .token_stream
             .next_if(|token| kinds.contains(&token.kind()))
         {
+            self.push_opt_lex_err(err, &token, start);
             let kind = token.kind();
             self.builder.push(token);
             Some(kind)
@@ -179,10 +215,12 @@ impl Parser {
     }
 
     pub(crate) fn start_node(&mut self, kind: NodeKind) {
-        self.builder.start_node(kind)
+        self.builder.start_node(kind);
+        self.recovery.push(kind);
     }
 
     pub(crate) fn end_node(&mut self) {
+        self.recovery.pop();
         self.builder.end_node()
     }
 
@@ -190,27 +228,15 @@ impl Parser {
         self.builder.checkpoint()
     }
 
+    /// Retroactively wrap children from `checkpoint` onward in a node of the
+    /// given kind.
     pub(crate) fn start_node_at(&mut self, checkpoint: Checkpoint, kind: NodeKind) {
-        self.builder.start_node_at(checkpoint, kind)
+        self.builder.start_node_at(checkpoint, kind);
+        self.recovery.push(kind);
     }
 
-    pub(crate) fn eof_err(&mut self) {
-        if !self.unexpected_eof {
-            self.unexpected_eof = true;
-            self.diagnostics
-                .push(ParserDiagnostic::new(self.builder.current_pos(), Eof))
-        }
-    }
-
-    pub(crate) fn expect_tokens_err(&mut self, tokens: impl Into<Box<[TokenKind]>>) {
-        self.diagnostics.push(ParserDiagnostic::new(
-            self.builder.current_pos(),
-            ExpectingTokens(tokens.into()),
-        ));
-    }
-
-    pub(crate) fn end(self) -> (GreenNode, Vec<ParserDiagnostic>) {
-        (self.builder.end(), self.diagnostics)
+    pub(crate) fn end(self) -> (GreenNode, Vec<SyntaxErr>) {
+        (self.builder.end(), self.errors)
     }
 
     pub(crate) fn lookahead_max_token_index<const N: usize>(

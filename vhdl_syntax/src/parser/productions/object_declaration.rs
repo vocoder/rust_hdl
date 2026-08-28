@@ -38,7 +38,12 @@ impl Parser {
     }
 
     pub fn variable_declaration(&mut self) {
-        self.start_node(VariableDeclaration);
+        let kind = if self.next_is(Keyword(Kw::Shared)) {
+            SharedVariableDeclaration
+        } else {
+            VariableDeclaration
+        };
+        self.start_node(kind);
         self.opt_token(Keyword(Kw::Shared));
         self.expect_token(Keyword(Kw::Variable));
         self.identifier_list();
@@ -154,5 +159,35 @@ mod tests {
             Parser::constant_declaration,
             "constant foo : natural := 0;"
         ));
+    }
+
+    // MARK: Error recovery
+
+    #[test]
+    fn signal_missing_colon() {
+        assert_recovery_snapshot!("signal clk std_logic;", Parser::signal_declaration);
+    }
+
+    #[test]
+    fn signal_missing_type() {
+        assert_recovery_snapshot!("signal clk : ;", Parser::signal_declaration);
+    }
+
+    #[test]
+    fn signal_missing_trailing_semicolon() {
+        assert_recovery_snapshot!("signal clk : std_logic", Parser::signal_declaration);
+    }
+
+    #[test]
+    fn constant_missing_default_expression() {
+        assert_recovery_snapshot!(
+            "constant width : integer := ;",
+            Parser::constant_declaration
+        );
+    }
+
+    #[test]
+    fn variable_missing_identifier() {
+        assert_recovery_snapshot!("variable : integer;", Parser::variable_declaration);
     }
 }
